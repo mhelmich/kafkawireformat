@@ -1,0 +1,64 @@
+/*
+ * Copyright 2018 Marco Helmich
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package kafkawireformat
+import ()
+
+type FindCoordinatorResponse1_Coordinator struct {
+    NodeId int32
+    Host string
+    Port int32
+}
+
+func (that *FindCoordinatorResponse1_Coordinator) Encode(enc *Encoder) error {
+    enc.WriteInt32(that.NodeId)
+    enc.WriteString(that.Host)
+    enc.WriteInt32(that.Port)
+    return nil
+}
+
+func (that *FindCoordinatorResponse1_Coordinator) Decode(dec *Decoder) error {
+    that.NodeId = dec.ReadInt32()
+    that.Host = dec.ReadString()
+    that.Port = dec.ReadInt32()
+    return nil
+}
+
+type FindCoordinatorResponse1 struct {
+    ThrottleTimeMs int32
+    ErrorCode int16
+    ErrorMessage string
+    Coordinator *FindCoordinatorResponse1_Coordinator
+}
+
+func (that *FindCoordinatorResponse1) Encode(enc *Encoder) error {
+    enc.WriteInt32(that.ThrottleTimeMs)
+    enc.WriteInt16(that.ErrorCode)
+    enc.WriteString(that.ErrorMessage)
+    that.Coordinator.Encode(enc)
+
+    return nil
+}
+
+func (that *FindCoordinatorResponse1) Decode(dec *Decoder) error {
+    that.ThrottleTimeMs = dec.ReadInt32()
+    that.ErrorCode = dec.ReadInt16()
+    that.ErrorMessage = dec.ReadString()
+    that.Coordinator = new(FindCoordinatorResponse1_Coordinator)
+    that.Coordinator.Decode(dec)
+    return nil
+}
+
