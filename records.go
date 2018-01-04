@@ -108,10 +108,8 @@ func (r *Record) Decode(dec *Decoder) error {
     r.Attributes = dec.ReadInt8()
     r.TimestampDelta, _ = dec.ReadVarInt()
     r.OffsetDelta, _ = dec.ReadVarInt()
-    r.KeyLen, _ = dec.ReadVarInt()
-    r.Key = dec.ReadByteArray()
-    r.ValueLen, _ = dec.ReadVarInt()
-    r.Value = dec.ReadByteArray()
+    r.Key = dec.ReadVarIntByteArray()
+    r.Value = dec.ReadVarIntByteArray()
     {
         arrayLength := dec.ReadInt32()
         if int(arrayLength) == -1 {
@@ -135,10 +133,8 @@ func (r *Record) Encode(enc *Encoder) error {
     enc.WriteInt8(r.Attributes)
     enc.WriteVarInt(r.TimestampDelta)
     enc.WriteVarInt(r.OffsetDelta)
-    enc.WriteVarInt(r.KeyLen)
-    enc.WriteByteArray(r.Key)
-    enc.WriteVarInt(r.ValueLen)
-    enc.WriteByteArray(r.Value)
+    enc.WriteVarIntByteArray(r.Key)
+    enc.WriteVarIntByteArray(r.Value)
     {
         l := len(r.Headers)
         enc.WriteInt32(int32(l))

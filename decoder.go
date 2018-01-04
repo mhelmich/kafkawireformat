@@ -87,6 +87,22 @@ func (dec *Decoder) ReadString() (ret string) {
     }
 }
 
+func (dec *Decoder) ReadVarIntByteArray() (ret []byte) {
+    bitesLength, _ := dec.ReadVarInt()
+    if int(bitesLength) == -1 {
+        ret = make([]byte, 0)
+        return
+    } else {
+        buf := make([]byte, bitesLength)
+        n, err := dec.decoder.Read(buf)
+        if err != nil || n != int(bitesLength) {
+            fmt.Printf("Couldn't read %d bytes but only %d\n", bitesLength, n)
+        }
+        ret = buf
+        return
+    }
+}
+
 func (dec *Decoder) ReadByteArray() (ret []byte) {
     bitesLength := dec.ReadInt32()
     if int(bitesLength) == -1 {

@@ -104,6 +104,12 @@ func (enc *Encoder) WriteStringArray(strings []string) {
     }
 }
 
+func (enc *Encoder) WriteVarIntByteArray(bites []byte) {
+    arrayLength := len(bites)
+    enc.WriteVarInt(int64(arrayLength))
+    binary.Write(enc.buffer, binary.BigEndian, bites)
+}
+
 func (enc *Encoder) WriteByteArray(bites []byte) {
     arrayLength := len(bites)
     enc.WriteInt32(int32(arrayLength))
