@@ -16,11 +16,22 @@
 
 package kafkawireformat
 
+import (
+    "hash/crc32"
+)
+
 type Records interface {
 }
 
+// the length field of a RecordBatch denotes the length of the entire message
+// this is the byte size of the static "overhead" (the size of the metadata fields)
+// the number of actual bytes that contain Records (or the payload) of this message
+// can be calculated by (Length - constantBatchMessageHeaderSize)
+const constantBatchMessageHeaderSize = 57
+
 type RecordBatch struct {
-    FirstOffset          int64
+    FirstOffset int64
+    // this is the byte size of this entire RecordBatch
     Length               int32
     PartitionLeaderEpoch int32
     Magic                int8
@@ -32,6 +43,7 @@ type RecordBatch struct {
     Attributes      int16
     LastOffsetDelta int32
     FirstTimestamp  int64
+    MaxTimestamp    int64
     ProducerId      int64
     ProducerEpoch   int16
     FirstSequence   int32
@@ -47,71 +59,92 @@ func (rb *RecordBatch) Decode(dec *Decoder) error {
     rb.Attributes = dec.ReadInt16()
     rb.LastOffsetDelta = dec.ReadInt32()
     rb.FirstTimestamp = dec.ReadInt64()
+    rb.MaxTimestamp = dec.ReadInt64()
     rb.ProducerId = dec.ReadInt64()
     rb.ProducerEpoch = dec.ReadInt16()
     rb.FirstSequence = dec.ReadInt32()
+    numRecords := dec.ReadInt32()
+    // read all records as raw bytes first
+    recordsAsBytes := dec.ReadRawBytes(int(rb.Length) - constantBatchMessageHeaderSize)
+    innerDec := NewDecoderFromBytes(recordsAsBytes)
     {
-        arrayLength := dec.ReadInt32()
-        if int(arrayLength) == -1 {
+        if int(numRecords) == -1 {
             rb.Records = nil
         } else {
-            buf := make([]*Record, arrayLength)
+            buf := make([]*Record, numRecords)
             var i int32
-            for i = 0; i < arrayLength; i++ {
+            for i = 0; i < numRecords; i++ {
                 item := new(Record)
-                item.Decode(dec)
+                item.Decode(innerDec)
                 buf[i] = item
             }
             rb.Records = buf
         }
     }
+
     return nil
 }
 
 func (rb *RecordBatch) Encode(enc *Encoder) error {
-    enc.WriteInt64(rb.FirstOffset)
-    enc.WriteInt32(rb.Length)
-    enc.WriteInt32(rb.PartitionLeaderEpoch)
-    enc.WriteInt8(rb.Magic)
-    enc.WriteInt32(rb.CRC)
-    enc.WriteInt16(rb.Attributes)
-    enc.WriteInt32(rb.LastOffsetDelta)
-    enc.WriteInt64(rb.FirstTimestamp)
-    enc.WriteInt64(rb.ProducerId)
-    enc.WriteInt16(rb.ProducerEpoch)
-    enc.WriteInt32(rb.FirstSequence)
+    numRecords := int32(len(rb.Records))
+    recordsEnc := NewEncoder()
     {
-        l := len(rb.Records)
-        enc.WriteInt32(int32(l))
-        for i := 0; i < l; i++ {
-            rb.Records[i].Encode(enc)
+        for i := int32(0); i < numRecords; i++ {
+            rb.Records[i].Encode(recordsEnc)
         }
     }
+
+    crcCheckSumEnc := NewEncoder()
+    crcCheckSumEnc.WriteInt16(rb.Attributes)
+    crcCheckSumEnc.WriteInt32(rb.LastOffsetDelta)
+    crcCheckSumEnc.WriteInt64(rb.FirstTimestamp)
+    crcCheckSumEnc.WriteInt64(rb.MaxTimestamp)
+    crcCheckSumEnc.WriteInt64(rb.ProducerId)
+    crcCheckSumEnc.WriteInt16(rb.ProducerEpoch)
+    crcCheckSumEnc.WriteInt32(rb.FirstSequence)
+    // yes, this is the number of records (not the byte size!!!)
+    crcCheckSumEnc.WriteInt32(numRecords)
+    crcCheckSumEnc.WriteRawBytes(recordsEnc.Bytes())
+
+    // write the byte size of the RecordBatch structure first
+    // that'll be my calculation plus these magical 4 bytes
+    enc.WriteInt32(int32(constantBatchMessageHeaderSize + recordsEnc.Len() + 4))
+    enc.WriteInt64(rb.FirstOffset)
+    // this is the byte size of the remainder of the RecordBatch (basically the size of the message from here on including me [the size int32])
+    enc.WriteInt32(int32(constantBatchMessageHeaderSize + recordsEnc.Len() - 8)) // this might be -8 (the first offset (8 for the int64) that we skipped)
+    enc.WriteInt32(rb.PartitionLeaderEpoch)
+    enc.WriteInt8(int8(2))
+
+    crcCheckSum := crc32.Checksum(crcCheckSumEnc.Bytes(), crc32.MakeTable(crc32.Castagnoli))
+    enc.WriteInt32(int32(crcCheckSum))
+    enc.WriteRawBytes(crcCheckSumEnc.Bytes())
     return nil
 }
 
 type Record struct {
-    Length int64 // varint
+    // Length int64 // varint byte size of the Record
     // currently unused
     Attributes     int8
     TimestampDelta int64  // varint
     OffsetDelta    int64  // varint
-    KeyLen         int64  // varint
     Key            []byte // data
-    ValueLen       int64  // varint
     Value          []byte // data
     Headers        []*Header
 }
 
 func (r *Record) Decode(dec *Decoder) error {
-    r.Length, _ = dec.ReadVarInt()
-    r.Attributes = dec.ReadInt8()
-    r.TimestampDelta, _ = dec.ReadVarInt()
-    r.OffsetDelta, _ = dec.ReadVarInt()
-    r.Key = dec.ReadVarIntByteArray()
-    r.Value = dec.ReadVarIntByteArray()
+    // This looks a little different than any other
+    // message because a Record is lead with its byte size
+    // as varint. That means I need to serialize the message
+    // first in order to calculate its byte size.
+    innerDec := NewDecoderFromBytes(dec.ReadVarIntByteArray())
+    r.Attributes = innerDec.ReadInt8()
+    r.TimestampDelta, _ = innerDec.ReadVarInt()
+    r.OffsetDelta, _ = innerDec.ReadVarInt()
+    r.Key = innerDec.ReadVarIntByteArray()
+    r.Value = innerDec.ReadVarIntByteArray()
     {
-        arrayLength := dec.ReadInt32()
+        arrayLength := innerDec.ReadInt32()
         if int(arrayLength) == -1 {
             r.Headers = nil
         } else {
@@ -119,7 +152,7 @@ func (r *Record) Decode(dec *Decoder) error {
             var i int32
             for i = 0; i < arrayLength; i++ {
                 item := new(Header)
-                item.Decode(dec)
+                item.Decode(innerDec)
                 buf[i] = item
             }
             r.Headers = buf
@@ -129,41 +162,40 @@ func (r *Record) Decode(dec *Decoder) error {
 }
 
 func (r *Record) Encode(enc *Encoder) error {
-    enc.WriteVarInt(r.Length)
-    enc.WriteInt8(r.Attributes)
-    enc.WriteVarInt(r.TimestampDelta)
-    enc.WriteVarInt(r.OffsetDelta)
-    enc.WriteVarIntByteArray(r.Key)
-    enc.WriteVarIntByteArray(r.Value)
+    // This looks a little different than any other
+    // message because a Record is lead with its byte size
+    // as varint. That means I need to serialize the message
+    // first in order to calculate its byte size.
+    innerEnc := NewEncoder()
+    innerEnc.WriteInt8(r.Attributes)
+    innerEnc.WriteVarInt(r.TimestampDelta)
+    innerEnc.WriteVarInt(r.OffsetDelta)
+    innerEnc.WriteVarIntByteArray(r.Key)
+    innerEnc.WriteVarIntByteArray(r.Value)
     {
-        l := len(r.Headers)
-        enc.WriteInt32(int32(l))
-        for i := 0; i < l; i++ {
-            r.Headers[i].Encode(enc)
+        arrayLength := len(r.Headers)
+        innerEnc.WriteVarInt(int64(arrayLength))
+        for i := 0; i < arrayLength; i++ {
+            r.Headers[i].Encode(innerEnc)
         }
     }
+    enc.WriteVarIntByteArray(innerEnc.Bytes())
     return nil
 }
 
 type Header struct {
-    HeaderKeyLen   int64 // varint
-    HeaderKey      string
-    HeaderValueLen int64  // varint
-    HeaderValue    []byte // data
+    HeaderKey   string
+    HeaderValue []byte // this is just bytes -- the consumer needs to figure out what this is
 }
 
 func (h *Header) Decode(dec *Decoder) error {
-    h.HeaderKeyLen, _ = dec.ReadVarInt()
-    h.HeaderKey = dec.ReadString()
-    h.HeaderValueLen, _ = dec.ReadVarInt()
-    h.HeaderValue = dec.ReadByteArray()
+    h.HeaderKey = string(dec.ReadVarIntByteArray())
+    h.HeaderValue = dec.ReadVarIntByteArray()
     return nil
 }
 
 func (h *Header) Encode(enc *Encoder) error {
-    enc.WriteVarInt(h.HeaderKeyLen)
-    enc.WriteString(h.HeaderKey)
-    enc.WriteVarInt(h.HeaderValueLen)
-    enc.WriteByteArray(h.HeaderValue)
+    enc.WriteVarIntByteArray([]byte(h.HeaderKey))
+    enc.WriteVarIntByteArray(h.HeaderValue)
     return nil
 }

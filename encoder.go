@@ -116,6 +116,10 @@ func (enc *Encoder) WriteByteArray(bites []byte) {
     binary.Write(enc.buffer, binary.BigEndian, bites)
 }
 
+func (enc *Encoder) WriteRawBytes(bites []byte) {
+    binary.Write(enc.buffer, binary.BigEndian, bites)
+}
+
 func (enc *Encoder) WriteBoolArray(bs []bool) {
     arrayLength := len(bs)
     enc.WriteInt32(int32(arrayLength))

@@ -18,12 +18,19 @@ package kafkawireformat
 
 import (
     "bufio"
+    "bytes"
     "encoding/binary"
     "fmt"
 )
 
 type Decodable interface {
     Decode(dec *Decoder) error
+}
+
+func NewDecoderFromBytes(bites []byte) *Decoder {
+    return &Decoder{
+        decoder: bufio.NewReader(bytes.NewReader(bites)),
+    }
 }
 
 func NewDecoder(r *bufio.Reader) *Decoder {
@@ -103,6 +110,16 @@ func (dec *Decoder) ReadVarIntByteArray() (ret []byte) {
     }
 }
 
+func (dec *Decoder) ReadRawBytes(numBites int) (ret []byte) {
+    buf := make([]byte, numBites)
+    n, err := dec.decoder.Read(buf)
+    if err != nil || n != int(numBites) {
+        fmt.Printf("Couldn't read %d bytes but only %d\n", numBites, n)
+    }
+    ret = buf
+    return
+}
+
 func (dec *Decoder) ReadByteArray() (ret []byte) {
     bitesLength := dec.ReadInt32()
     if int(bitesLength) == -1 {
@@ -153,7 +170,7 @@ func (dec *Decoder) ReadInt64Array() (ret []int64) {
 
 func (dec *Decoder) ReadStringArray() (ret []string) {
     arrayLength := dec.ReadInt32()
-        if int(arrayLength) == -1 {
+    if int(arrayLength) == -1 {
         ret = nil
         return
     } else {
