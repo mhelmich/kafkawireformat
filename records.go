@@ -14,6 +14,11 @@
  * limitations under the License.
  */
 
+// TODO:
+// - compression isn't implemented yet
+// - make use of attributes that are sent with the messages
+// - lazy byte stream parsing
+
 package kafkawireformat
 
 import (
@@ -34,6 +39,7 @@ type RecordBatch struct {
     // this is the byte size of this entire RecordBatch
     Length               int32
     PartitionLeaderEpoch int32
+    // this integer better will be 2
     Magic                int8
     CRC                  int32
     // lowest three bits contain the compression algorithm used for the message (0 -> none, 1 -> gzip, 2 -> snappy)
